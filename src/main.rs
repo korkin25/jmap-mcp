@@ -81,6 +81,15 @@ async fn main() -> Result<()> {
 
 fn build_app(cfg: Config) -> Result<Router> {
     let logto = LogtoValidationClient::new(&cfg.authorization_server, cfg.resource_url.clone())?;
+    let logto = if let Some(validation) = &cfg.oidc_validation {
+        logto.with_oidc_validation(
+            validation.issuer.clone(),
+            validation.audience.clone(),
+            validation.jwks_url.clone(),
+        )?
+    } else {
+        logto
+    };
     let jmap = JmapClient::new(
         &cfg.stalwart_jmap_base_url,
         cfg.stalwart_connect_ip.as_deref(),
@@ -149,7 +158,9 @@ fn build_router(
             ))
         },
         Arc::new(session::CappedSessionManager::new()),
-        StreamableHttpServerConfig::default().with_allowed_hosts(allowed_hosts),
+        StreamableHttpServerConfig::default()
+            .with_stateful_mode(!cfg.stateless)
+            .with_allowed_hosts(allowed_hosts),
     );
 
     let initialize_limiter = Arc::new(InitializeLimiter::new(
@@ -738,5 +749,108 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.status(), StatusCode::OK);
+    }
+    fn security_router(mail_url: &str) -> Router {
+        let mut cfg = test_config();
+        cfg.stalwart_jmap_base_url = mail_url.into();
+        cfg.stateless = true;
+        let logto = crate::logto_oidc::tests::security_test_client();
+        let state = AuthState {
+            config: cfg.clone(),
+            logto: logto.clone(),
+            jmap: JmapClient::new(mail_url, None).unwrap(),
+            last_used: crate::last_used::LastUsedTracker::new(),
+        };
+        build_router(
+            cfg,
+            state,
+            JmapClient::new(mail_url, None).unwrap(),
+            logto,
+            Arc::new(crate::rate_limit::Limiter::new(100_000, 100_000).unwrap()),
+            5 * 1024 * 1024,
+            10 * 1024 * 1024,
+        )
+    }
+
+    fn security_request(method: &str, token: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri("/mcp")
+            .header(header::HOST, "jmap-mcp.example.test")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("mcp-protocol-version", "2025-03-26")
+            .header("mcp-session-id", "another-users-session")
+            .header("last-event-id", "0_0")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn security_stateless_rejects_get_replay_and_delete_with_valid_token() {
+        let token = crate::logto_oidc::tests::security_test_token(
+            "bob",
+            crate::logto_oidc::tests::TEST_ISSUER,
+            "stalwart",
+        );
+        let app = security_router("https://mail.example.test");
+        for method in ["GET", "DELETE"] {
+            let response = app
+                .clone()
+                .oneshot(security_request(method, &token, ""))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+            assert!(response.headers().get("mcp-session-id").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn security_stateless_tools_use_each_requests_identity_despite_session_headers() {
+        use wiremock::matchers::{header as matches_header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let app = security_router(&server.uri());
+        for (id, user) in [(1, "alice"), (2, "bob")] {
+            let token = crate::logto_oidc::tests::security_test_token(
+                user,
+                crate::logto_oidc::tests::TEST_ISSUER,
+                "stalwart",
+            );
+            Mock::given(method("GET"))
+                .and(path("/.well-known/jmap"))
+                .and(matches_header("authorization", format!("Bearer {token}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "apiUrl": format!("{}/jmap", server.uri()),
+                    "downloadUrl": format!("{}/download", server.uri()),
+                    "uploadUrl": format!("{}/upload", server.uri()),
+                    "primaryAccounts": {"urn:ietf:params:jmap:mail": format!("account-{user}")},
+                    "username": format!("{user}@example.test")
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let body = serde_json::json!({"jsonrpc":"2.0", "id":id,
+                "method":"tools/call", "params":{"name":"whoami","arguments":{}}})
+            .to_string();
+            let response = app
+                .clone()
+                .oneshot(security_request("POST", &token, &body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(response.headers().get("mcp-session-id").is_none());
+            let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+            let text = std::str::from_utf8(&bytes).unwrap();
+            assert!(
+                text.contains(&format!("account-{user}")),
+                "missing per-request identity: {text}"
+            );
+            let other = if user == "alice" { "bob" } else { "alice" };
+            assert!(!text.contains(&format!("account-{other}")));
+        }
     }
 }
