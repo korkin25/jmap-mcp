@@ -302,3 +302,12 @@ protocol versions 2025-03-26/2025-06-18, token validation, replay rejection,
 identity isolation and stateful/stateless quotas. RustSec and OSV report no
 vulnerabilities, and cargo-deny passes bans/licenses/sources. Exact-SHA runner
 CI and release scanning remain mandatory before accepting an image.
+
+The release runner uses Ubuntu 24.04. The pinned Cosign installer requires
+`envsubst`, which the minimal runner does not include. Release extracts the
+upstream Ubuntu `gettext-base` 0.21-14ubuntu2 amd64 package into the job's
+temporary directory and adds its binaries to the job PATH. Its SHA256 is pinned
+from Ubuntu noble's signed `InRelease` / `Packages` metadata; no runner image or
+system package configuration is changed. Cosign's upstream binary signature
+verification remains enabled. A failed installation leaves only an unaccepted
+candidate, without the final `sha-…` or `latest` tags.
