@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
 # Multi-stage build → distroless runtime. Final image ~20-25 MiB.
 # Unlike matrix-mcp, jmap-mcp has no media or SQLite build dependencies. CMake
@@ -10,8 +10,11 @@ FROM rust:${RUST_VERSION}-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8
 
 WORKDIR /build
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends cmake && \
+# Frozen Debian snapshot pins the transitive apt dependency set as well.
+RUN rm -f /etc/apt/sources.list.d/* && \
+    printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260201T000000Z/ bookworm main\n' > /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends cmake=3.25.1-1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Cache dependencies separately from source: copy manifest first, build a
@@ -38,7 +41,7 @@ ARG VCS_REF=unknown
 
 LABEL org.opencontainers.image.title="jmap-mcp" \
       org.opencontainers.image.description="Remote MCP server exposing a Stalwart JMAP mailbox" \
-      org.opencontainers.image.source="https://github.com/jlxq0/jmap-mcp" \
+      org.opencontainers.image.source="https://github.com/korkin25/jmap-mcp" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"

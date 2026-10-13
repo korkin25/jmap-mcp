@@ -193,3 +193,112 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and
 ## License
 
 [MIT](LICENSE).
+
+## External OIDC validation behind a gateway
+
+An OAuth-aware gateway can handle client authorization, protected-resource
+metadata and token exchange, then send a backend access token to jmap-mcp.
+For example, an Authentik deployment can use:
+
+```dotenv
+JMAP_MCP_RESOURCE_URL=https://mcp.your-domain.example
+JMAP_MCP_AUTHORIZATION_SERVER=https://auth.your-domain.example/application/o/mail-backend/
+JMAP_MCP_STALWART_JMAP_BASE_URL=https://mail.your-domain.example
+JMAP_MCP_OIDC_ISSUER=https://auth.your-domain.example/application/o/mail-backend/
+JMAP_MCP_OIDC_AUDIENCE=mail-backend-client-id
+JMAP_MCP_OIDC_JWKS_URL=https://auth.your-domain.example/application/o/mail-backend/jwks/
+JMAP_MCP_STATELESS=true
+```
+
+Set all three `JMAP_MCP_OIDC_*` variables together. Partial configuration,
+non-HTTPS issuer/JWKS URLs, embedded URL credentials and an empty audience fail
+at startup. The issuer is matched exactly, including any trailing slash. JWT
+signature, issuer, audience, expiry and subject validation remain enabled.
+Stalwart must accept the same backend token and map its subject to the caller's
+mailbox. These settings do not implement token exchange or change the built-in
+Logto OAuth proxy: the gateway must serve discovery and authorization endpoints.
+Only expose jmap-mcp to that gateway, and leave its Logto DCR shim unconfigured.
+Keep `JMAP_MCP_ALLOW_STALWART_APP_PASSWORD=false` (the default) for a JWT-only
+backend. Enabling that separate option permits HTTP Basic app passwords; it
+never makes opaque Bearer tokens valid.
+
+`JMAP_MCP_STATELESS=true` creates a fresh MCP service for each POST, using that
+request's authenticated identity. It issues no MCP session ID and disables GET
+streams, DELETE and event replay. Supplied session headers on POST are ignored;
+they do not select another caller's session. Responses may still use SSE framing
+within the individual POST. Configure the gateway's MCP transport as stateless
+as well (for agentgateway: `spec.mcp.sessionRouting: Stateless`). Clients requiring
+session resumption or server-initiated streams cannot use this mode. Multiple
+replicas need no session affinity, although in-memory rate limits remain per
+process. Both overrides are opt-in: without them, existing Logto validation and
+stateful MCP transport retain their defaults.
+
+## Fork CI and images
+
+`korkin25/jmap-mcp` builds exclusively on the ephemeral
+`pure-vps-linux-x64-jmap-mcp` ARC runner. Its dedicated profile mounts no
+shared registry credentials or Kubernetes token. Jobs use fresh PVC storage,
+remove the checkout even on failure, and ARC deletes the Pod/PVC after each
+job. There is no shared Cargo or image cache.
+
+Only the repository owner can trigger push/manual runs or same-repository
+PR runs. External fork PRs use `pull_request` and GitHub's
+`all_external_contributors` approval policy; review their workflow YAML before
+approval. The owner must remain the only write/admin collaborator, because
+GitHub allows other write collaborators to approve external workflows too.
+An approved external run retains its original actor; owner-only reruns check
+`triggering_actor`. There are no privileged PR, comment or workflow-run
+triggers. PR jobs get only a read-only token and cannot publish images.
+
+The owner-only release workflow runs on `main` pushes or manual dispatch from
+`main`. It repeats formatting, Clippy, tests and dependency scans on the exact
+source SHA. Cargo dependencies, Rust and container bases are pinned; apt uses
+a fixed Debian snapshot and exact CMake version. A candidate image is pushed
+with BuildKit provenance/SBOM, scanned by immutable digest, given an SPDX
+artifact and signed with Cosign before promotion to `sha-<full SHA>` and
+`latest`. Candidate tags are not accepted releases; a failed scan never
+promotes them. Scanning rejects fixable HIGH/CRITICAL image findings;
+unfixed findings are excluded from this release gate. Deploy only the accepted
+digest recorded in the successful release summary. Roll back by restoring
+the previous accepted digest; never rebuild or rely on the mutable `latest`
+tag. Registry: `ghcr.io/korkin25/jmap-mcp`.
+
+Repository Actions policy is declared in `.github/repository-policy.json`.
+Run `python3 scripts/configure-actions.py` to verify it; the owner can run
+`python3 scripts/configure-actions.py --activate` to initialize fork workflows.
+It checks approval policy, sole write/admin ownership and read-only default
+token permissions before reapplying the Actions enablement setting, then
+verifies active workflows. It never changes collaborator or approval settings.
+GitHub can initially report `enabled: true` on a new fork with no registered
+workflows; activation repairs that state without changing allowed actions.
+
+### Dependency security update (2026-10-13)
+
+The release lockfile upgrades `quinn-proto` 0.11.17 → 0.11.18,
+`rustls` 0.23.43 → 0.23.45, `chacha20` 0.10.1 → 0.10.2 and
+`rmcp`/`rmcp-macros` 1.8.0 → 2.1.0. This closes
+RUSTSEC-2026-0338/0340/0343/0285 and
+GHSA-33f5-2c5q-wgwj/9g45-5xwm-f3wc/9pj6-vhgr-3mwh/c9xm-49cp-xcr9;
+the yanked ChaCha release is replaced without an advisory suppression.
+
+- [Quinn 0.11.18](https://github.com/quinn-rs/quinn/releases/tag/quinn-proto-0.11.18)
+  fixes ACK/datagram panics and backports transport fixes.
+- [Rustls 0.23.44](https://github.com/rustls/rustls/releases/tag/v/0.23.44)
+  and [0.23.45](https://github.com/rustls/rustls/releases/tag/v/0.23.45)
+  tighten malformed handshake handling and include alignment/ECH fixes.
+  The new aws-lc ML-DSA default does not affect this lockfile's rustls `ring`
+  backend. ChaCha 0.10.2 fixes an SSE4.1 intrinsic used by the SSE2 backend;
+  see its [changelog](https://github.com/RustCrypto/stream-ciphers/blob/master/chacha20/CHANGELOG.md).
+- [RMCP 2.0](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v2.0.0)
+  validates initialization before session allocation and closes the session
+  table leak. Its ContentBlock/non-exhaustive model API changes need no source
+  adaptation here because this server already uses compatible constructors.
+  [RMCP 2.1](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v2.1.0)
+  fixes redirect header leakage and preserves stateless protocol negotiation.
+  Server features remain unchanged; the OAuth client is not enabled.
+
+All 205 tests pass locally on Rust 1.93.0 with these versions, including
+protocol versions 2025-03-26/2025-06-18, token validation, replay rejection,
+identity isolation and stateful/stateless quotas. RustSec and OSV report no
+vulnerabilities, and cargo-deny passes bans/licenses/sources. Exact-SHA runner
+CI and release scanning remain mandatory before accepting an image.
