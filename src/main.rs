@@ -163,18 +163,24 @@ fn build_router(
             .with_allowed_hosts(allowed_hosts),
     );
 
-    let initialize_limiter = Arc::new(InitializeLimiter::new(
-        crate::rate_limit::INITIALIZE_REFILL_INTERVAL,
-        MAX_INITIALIZES_PER_IDENTITY,
-    ));
-
     let mcp_routes = Router::new()
         .nest_service("/mcp", mcp_service)
-        .route("/token/introspect", get(token_introspect::handler))
-        .layer(middleware::from_fn_with_state(
-            initialize_limiter,
+        .route("/token/introspect", get(token_introspect::handler));
+    // Stateless requests never create sessions and normally have no session
+    // header. The initialization quota would incorrectly throttle every call.
+    // Per-tool read/write quotas remain enforced by JmapMcpService.
+    let mcp_routes = if cfg.stateless {
+        mcp_routes
+    } else {
+        mcp_routes.layer(middleware::from_fn_with_state(
+            Arc::new(InitializeLimiter::new(
+                crate::rate_limit::INITIALIZE_REFILL_INTERVAL,
+                MAX_INITIALIZES_PER_IDENTITY,
+            )),
             initialize_rate_limit,
         ))
+    };
+    let mcp_routes = mcp_routes
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             bearer_auth,
@@ -734,6 +740,69 @@ mod tests {
             Some(html),
             "the html the backend served must reach the caller, got: {out}"
         );
+    }
+
+    #[tokio::test]
+    async fn stateless_calls_without_session_header_keep_tool_quota() {
+        let stalwart = mock_jmap(None).await;
+        let mut cfg = harness_config(&stalwart.uri());
+        cfg.stateless = true;
+        // More than the session-creation burst, but bounded by the tool quota.
+        cfg.rate_limit_reads_per_min = MAX_INITIALIZES_PER_IDENTITY + 4;
+        let app = build_app(cfg).unwrap();
+        let basic = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("lucy@lindner.earth:app-password")
+        );
+        for id in 0..MAX_INITIALIZES_PER_IDENTITY + 5 {
+            let body = serde_json::json!({"jsonrpc":"2.0", "id":id,
+                "method":"tools/call", "params":{"name":"whoami","arguments":{}}})
+            .to_string();
+            let response = app
+                .clone()
+                .oneshot(mcp_request(&basic, None, body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "call {id}");
+            assert!(response.headers().get("mcp-session-id").is_none());
+            let result = sse_json(response).await;
+            if id < MAX_INITIALIZES_PER_IDENTITY + 4 {
+                assert_eq!(result["result"]["isError"], false, "call {id}: {result}");
+            } else {
+                assert_eq!(
+                    result["error"]["code"],
+                    crate::audit::RATE_LIMITED_CODE,
+                    "{result}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn stateful_initialization_still_enforces_session_quota() {
+        let stalwart = mock_jmap(None).await;
+        let app = build_app(harness_config(&stalwart.uri())).unwrap();
+        let basic = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("lucy@lindner.earth:app-password")
+        );
+        for id in 0..=MAX_INITIALIZES_PER_IDENTITY {
+            let body = serde_json::json!({"jsonrpc":"2.0", "id":id,
+                "method":"initialize", "params":{"protocolVersion":"2025-06-18",
+                "capabilities":{},"clientInfo":{"name":"quota-test","version":"1"}}})
+            .to_string();
+            let response = app
+                .clone()
+                .oneshot(mcp_request(&basic, None, body))
+                .await
+                .unwrap();
+            if id < MAX_INITIALIZES_PER_IDENTITY {
+                assert_eq!(response.status(), StatusCode::OK);
+                assert!(response.headers().contains_key("mcp-session-id"));
+            } else {
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            }
+        }
     }
 
     #[tokio::test]

@@ -258,7 +258,16 @@ with BuildKit provenance/SBOM, scanned by immutable digest, given an SPDX
 artifact and signed with Cosign before promotion to `sha-<full SHA>` and
 `latest`. Candidate tags are not accepted releases; a failed scan never
 promotes them. Scanning rejects fixable HIGH/CRITICAL image findings;
-unfixed findings remain visible in the scan output. Deploy only the accepted
+unfixed findings are excluded from this release gate. Deploy only the accepted
 digest recorded in the successful release summary. Roll back by restoring
 the previous accepted digest; never rebuild or rely on the mutable `latest`
 tag. Registry: `ghcr.io/korkin25/jmap-mcp`.
+
+Repository Actions policy is declared in `.github/repository-policy.json`.
+Run `python3 scripts/configure-actions.py` to verify it; the owner can run
+`python3 scripts/configure-actions.py --activate` to initialize fork workflows.
+It checks approval policy, sole write/admin ownership and read-only default
+token permissions before reapplying the Actions enablement setting, then
+verifies active workflows. It never changes collaborator or approval settings.
+GitHub can initially report `enabled: true` on a new fork with no registered
+workflows; activation repairs that state without changing allowed actions.
