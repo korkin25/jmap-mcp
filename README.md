@@ -271,3 +271,34 @@ token permissions before reapplying the Actions enablement setting, then
 verifies active workflows. It never changes collaborator or approval settings.
 GitHub can initially report `enabled: true` on a new fork with no registered
 workflows; activation repairs that state without changing allowed actions.
+
+### Dependency security update (2026-10-13)
+
+The release lockfile upgrades `quinn-proto` 0.11.17 → 0.11.18,
+`rustls` 0.23.43 → 0.23.45, `chacha20` 0.10.1 → 0.10.2 and
+`rmcp`/`rmcp-macros` 1.8.0 → 2.1.0. This closes
+RUSTSEC-2026-0338/0340/0343/0285 and
+GHSA-33f5-2c5q-wgwj/9g45-5xwm-f3wc/9pj6-vhgr-3mwh/c9xm-49cp-xcr9;
+the yanked ChaCha release is replaced without an advisory suppression.
+
+- [Quinn 0.11.18](https://github.com/quinn-rs/quinn/releases/tag/quinn-proto-0.11.18)
+  fixes ACK/datagram panics and backports transport fixes.
+- [Rustls 0.23.44](https://github.com/rustls/rustls/releases/tag/v/0.23.44)
+  and [0.23.45](https://github.com/rustls/rustls/releases/tag/v/0.23.45)
+  tighten malformed handshake handling and include alignment/ECH fixes.
+  The new aws-lc ML-DSA default does not affect this lockfile's rustls `ring`
+  backend. ChaCha 0.10.2 fixes an SSE4.1 intrinsic used by the SSE2 backend;
+  see its [changelog](https://github.com/RustCrypto/stream-ciphers/blob/master/chacha20/CHANGELOG.md).
+- [RMCP 2.0](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v2.0.0)
+  validates initialization before session allocation and closes the session
+  table leak. Its ContentBlock/non-exhaustive model API changes need no source
+  adaptation here because this server already uses compatible constructors.
+  [RMCP 2.1](https://github.com/modelcontextprotocol/rust-sdk/releases/tag/rmcp-v2.1.0)
+  fixes redirect header leakage and preserves stateless protocol negotiation.
+  Server features remain unchanged; the OAuth client is not enabled.
+
+All 205 tests pass locally on Rust 1.93.0 with these versions, including
+protocol versions 2025-03-26/2025-06-18, token validation, replay rejection,
+identity isolation and stateful/stateless quotas. RustSec and OSV report no
+vulnerabilities, and cargo-deny passes bans/licenses/sources. Exact-SHA runner
+CI and release scanning remain mandatory before accepting an image.
