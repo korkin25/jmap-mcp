@@ -232,3 +232,33 @@ session resumption or server-initiated streams cannot use this mode. Multiple
 replicas need no session affinity, although in-memory rate limits remain per
 process. Both overrides are opt-in: without them, existing Logto validation and
 stateful MCP transport retain their defaults.
+
+## Fork CI and images
+
+`korkin25/jmap-mcp` builds exclusively on the ephemeral
+`pure-vps-linux-x64-jmap-mcp` ARC runner. Its dedicated profile mounts no
+shared registry credentials or Kubernetes token. Jobs use fresh PVC storage,
+remove the checkout even on failure, and ARC deletes the Pod/PVC after each
+job. There is no shared Cargo or image cache.
+
+Only the repository owner can trigger push/manual runs or same-repository
+PR runs. External fork PRs use `pull_request` and GitHub's
+`all_external_contributors` approval policy; review their workflow YAML before
+approval. The owner must remain the only write/admin collaborator, because
+GitHub allows other write collaborators to approve external workflows too.
+An approved external run retains its original actor; owner-only reruns check
+`triggering_actor`. There are no privileged PR, comment or workflow-run
+triggers. PR jobs get only a read-only token and cannot publish images.
+
+The owner-only release workflow runs on `main` pushes or manual dispatch from
+`main`. It repeats formatting, Clippy, tests and dependency scans on the exact
+source SHA. Cargo dependencies, Rust and container bases are pinned; apt uses
+a fixed Debian snapshot and exact CMake version. A candidate image is pushed
+with BuildKit provenance/SBOM, scanned by immutable digest, given an SPDX
+artifact and signed with Cosign before promotion to `sha-<full SHA>` and
+`latest`. Candidate tags are not accepted releases; a failed scan never
+promotes them. Scanning rejects fixable HIGH/CRITICAL image findings;
+unfixed findings remain visible in the scan output. Deploy only the accepted
+digest recorded in the successful release summary. Roll back by restoring
+the previous accepted digest; never rebuild or rely on the mutable `latest`
+tag. Registry: `ghcr.io/korkin25/jmap-mcp`.
