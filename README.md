@@ -165,9 +165,8 @@ operator.
   byte limits.
 - In-memory caches, pending OAuth state, rate-limit key maps, MCP sessions, and
   request bodies have hard bounds.
-- Release CI runs formatting, Clippy, tests, independent RustSec and OSV
-  dependency audits, cargo-deny, container vulnerability scanning, SBOM
-  generation and provenance attestation.
+- CI builds the Docker image on pure_vps; trusted main builds publish to GHCR.
+
 
 See [SECURITY.md](SECURITY.md) for reporting and supported-version policy.
 
@@ -250,18 +249,15 @@ An approved external run retains its original actor; owner-only reruns check
 `triggering_actor`. There are no privileged PR, comment or workflow-run
 triggers. PR jobs get only a read-only token and cannot publish images.
 
-The owner-only release workflow runs on `main` pushes or manual dispatch from
-`main`. It repeats formatting, Clippy, tests and dependency scans on the exact
-source SHA. Cargo dependencies, Rust and container bases are pinned; apt uses
-a fixed Debian snapshot and exact CMake version. A candidate image is pushed
-with BuildKit provenance/SBOM, scanned by immutable digest, given an SPDX
-artifact before promotion to `sha-<full SHA>` and
-`latest`. Candidate tags are not accepted releases; a failed scan never
-promotes them. Scanning rejects fixable HIGH/CRITICAL image findings;
-unfixed findings are excluded from this release gate. Deploy only the accepted
-digest recorded in the successful release summary. Roll back by restoring
-the previous accepted digest; never rebuild or rely on the mutable `latest`
-tag. Registry: `ghcr.io/korkin25/jmap-mcp`.
+The Build workflow runs one image build per event: PRs and manual branch dispatch only
+build; owner-only pushes or manual dispatch on `main` build and publish to
+`ghcr.io/korkin25/jmap-mcp` with `sha-<full SHA>` and `latest` tags. The jobs
+are mutually exclusive, so main does not repeat a separate CI build. BuildKit
+adds provenance and SBOM during publication. CI runs no tests, formatting,
+linters, dependency audits or image scanners. Cargo dependencies, Rust and
+container bases remain pinned; apt uses a fixed Debian snapshot and exact
+CMake version. Deploy by the digest recorded in the successful build summary.
+Roll back to a previously accepted digest; never rebuild or rely on `latest`.
 
 Repository Actions policy is declared in `.github/repository-policy.json`.
 Run `python3 scripts/configure-actions.py` to verify it; the owner can run
