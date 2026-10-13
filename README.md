@@ -167,7 +167,7 @@ operator.
   request bodies have hard bounds.
 - Release CI runs formatting, Clippy, tests, independent RustSec and OSV
   dependency audits, cargo-deny, container vulnerability scanning, SBOM
-  generation, provenance attestation, and keyless image signing.
+  generation and provenance attestation.
 
 See [SECURITY.md](SECURITY.md) for reporting and supported-version policy.
 
@@ -255,7 +255,7 @@ The owner-only release workflow runs on `main` pushes or manual dispatch from
 source SHA. Cargo dependencies, Rust and container bases are pinned; apt uses
 a fixed Debian snapshot and exact CMake version. A candidate image is pushed
 with BuildKit provenance/SBOM, scanned by immutable digest, given an SPDX
-artifact and signed with Cosign before promotion to `sha-<full SHA>` and
+artifact before promotion to `sha-<full SHA>` and
 `latest`. Candidate tags are not accepted releases; a failed scan never
 promotes them. Scanning rejects fixable HIGH/CRITICAL image findings;
 unfixed findings are excluded from this release gate. Deploy only the accepted
@@ -302,12 +302,3 @@ protocol versions 2025-03-26/2025-06-18, token validation, replay rejection,
 identity isolation and stateful/stateless quotas. RustSec and OSV report no
 vulnerabilities, and cargo-deny passes bans/licenses/sources. Exact-SHA runner
 CI and release scanning remain mandatory before accepting an image.
-
-The release runner uses Ubuntu 24.04. The pinned Cosign installer requires
-`envsubst`, which the minimal runner does not include. Release extracts the
-upstream Ubuntu `gettext-base` 0.21-14ubuntu2 amd64 package into the job's
-temporary directory and adds its binaries to the job PATH. Its SHA256 is pinned
-from Ubuntu noble's signed `InRelease` / `Packages` metadata; no runner image or
-system package configuration is changed. Cosign's upstream binary signature
-verification remains enabled. A failed installation leaves only an unaccepted
-candidate, without the final `sha-…` or `latest` tags.
