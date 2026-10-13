@@ -57,6 +57,9 @@ jobs:
           find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 
   publish:
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
     if: >-
       github.repository == 'korkin25/jmap-mcp' && github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request' &&
