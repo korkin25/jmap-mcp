@@ -54,10 +54,10 @@ def main():
         raise SystemExit("Actions settings differ from repository-policy.json")
     workflows = api(repo + "/actions/workflows")["workflows"]
     active = {w["path"] for w in workflows if w["state"] == "active"}
-    required = {".github/workflows/ci.yml", ".github/workflows/release.yml"}
+    required = {".github/workflows/ci.yml"}
     if not required <= active:
         raise SystemExit("Workflows not active; use --activate after verifying owner gates")
-    print("Owner, approval, token permissions and active CI/release workflows verified")
+    print("Owner, approval, token permissions and active Build workflow verified")
 
 
 if __name__ == "__main__":

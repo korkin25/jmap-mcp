@@ -293,8 +293,7 @@ the yanked ChaCha release is replaced without an advisory suppression.
   fixes redirect header leakage and preserves stateless protocol negotiation.
   Server features remain unchanged; the OAuth client is not enabled.
 
-All 205 tests pass locally on Rust 1.93.0 with these versions, including
+Before the build-only CI decision, 205 tests passed on Rust 1.93.0 with these versions, including
 protocol versions 2025-03-26/2025-06-18, token validation, replay rejection,
-identity isolation and stateful/stateless quotas. RustSec and OSV report no
-vulnerabilities, and cargo-deny passes bans/licenses/sources. Exact-SHA runner
-CI and release scanning remain mandatory before accepting an image.
+identity isolation and stateful/stateless quotas. Those historical checks
+are not part of the current build-only workflow.
