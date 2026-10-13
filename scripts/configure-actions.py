@@ -41,6 +41,10 @@ def main():
     for key in ("default_workflow_permissions", "can_approve_pull_request_reviews"):
         if permissions[key] != policy[key]:
             raise SystemExit(f"Owner must review workflow permission: {key}")
+    current = api(repo + "/actions/permissions")
+    for key, value in policy["actions"].items():
+        if key != "enabled" and current.get(key) != value:
+            raise SystemExit(f"Owner must review restricted Actions setting: {key}")
     if args.activate:
         # A new fork can report enabled=true while no workflows are registered.
         # Reapplying this declarative setting initializes the inherited workflows.
